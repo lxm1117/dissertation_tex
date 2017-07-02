@@ -1,0 +1,176 @@
+%% This is an example first chapter.  You should put chapter/appendix that you
+%% write into a separate file, and add a line \include{yourfilename} to
+%% main.tex, where `yourfilename.tex' is the name of the chapter/appendix file.
+%% You can process specific files by typing their names in at the 
+%% \files=
+%% prompt when you run the file main.tex through LaTeX.
+\chapter{Methods}
+\section{Simulation}
+There exist various types of simulators for di↵erent biochemical reaction systems. Conventionally, biochemical reaction systems are described using concentrations as state variables and treated with ordinary differential equations (ODE). This approach is deterministic. It follows a well-mixed hypothesis, assuming either the molecule distribution is in spatially homogeneous or their diffusion occurs much faster than the reactions. Such an assumption is suitable for models without spatial concerns, for example, gene networks, and metabolic networks. COPASI~\cite{} is software widely used for the ODE models.
+
+Deterministic spatial models can be described with reaction-di↵usion equations. These equations are partial differential equations (PDE) that consist of reaction terms and diffusion terms. The Virtual Cell~\cite{} is software for simulating the reaction-diffusion systems. For stochastic models, in which state variables are discrete molecule numbers instead of continuous concentrations, the Gillespie algorithm~\cite{}, and its variations are used widely for simulations. The algorithm is exact regarding to chemical master equations. However it becomes computationally demanding when simulating large reaction systems.
+
+When models are both stochastic and spatial, there are a few simulation approaches with varying spatial resolution. Some divide the whole volume and perform Gillespie algorithm in each subvolume. However, the way of dividing the volume affects the simulation accuracy. Programs including MesoRD~\cite{} are for this type of simulations. A more accurate approach is to treat molecules individually as particles. In this case, space is not discretized but continuous. Molecules are particle-like objects. Their diffusion follows statistics of Brownian motion and their reaction events depend on molecular collisions. Software such as Smoldyn~\cite{} and MCell~\cite{} are particle-based simulators.
+
+\subsection{Smoldyn}
+
+For the model described here, we have chosen to use Smoldyn. Smoldyn is a stochastic simulator for discrete time continuous space systems. It simulates the Brownian motion of molecules and diffusion-limited chemical reactions. The molecules are point-like and do not take up physical space. Details such as rotation, orientation, intermolecular forces are not considered. The particle-based approach in Smoldyn provides a microsecond level temporal resolution and a nanometer level spatial accuracy. In Smoldyn, only molecules of interest are explicitly included in the simulation system. Although solvent and other molecules are assumed to collide constantly with the molecules of interest, their effects are treated implicitly as a↵ecting the diffusion of molecules in the system.
+
+Smoldyn uses a fixed time step. An appropriate time step value is selected so that in one time step the probability of having the fastest first order reaction occur is at most 0.1. With this assumption, during a time step, whether a first order reaction occurs or does not occur can be viewed as a binary event, which follows a Poisson distribution. For three-dimensional isotropic Brownian diffusions, a mean square distance is calculated for each diffusible molecule for each spatial coordinate following the equation $MSD = \sqrt{2\times rv\timesdt}$, where $rv$ is a unit Gaussian random variable and $dt$ is the time step. The MSD is calculated at each iteration and added to each diffusible molecule.
+
+The reactions built into the Smoldyn simulator are mostly elementary reactions and can be at most second order. First order reactions such as unbindings and (de)phosphorylations are modeled as Poisson processes with event rate equals the corresponding rate constant parameter measured from experiments. Probability is calculated for each reaction using equation P r = exp( rate ⇥ dt). A random variable is generated and compared to the Pr value as a criterion to decide whether to proceed the particular reaction (r.v.<Pr). Second order binding reactions in Smoldyn are di↵usion-limited, which means the binding step takes place fast once
+the reactants collide with each other. This concept is defined as below,
+KD * Ka A+B  !(AB)   !AB,Ka >>KD.
+Where Ka is the activation rate that allows bindings to complete, and KD is the rate that two reactants di↵use together and collide. This condition is a reasonable assumption for reactions in solution phase such as intracellular environments, where lots of reactions involve enzymes can lower the activation energy and allow reactions to proceed fast.
+
+Since molecules in Smoldyn do not possess physical volume, collisions are assumed to occur as long as two reactants are su ciently close. The criterion for the closeness is a binding radius, which is calculated in Smoldyn based on simulation time step, reactants diffusion coeffcients, the kinetic rate constant, and the possible reversal unbinding reactions. Reactants within the binding radius are allowed to bind.
+The workflow of Smoldyn within a time step is as follow:
+diffusion ! surface interaction check ! reactions ! surface interaction check ! imulation time update
+
+Molecules are grouped into lists, which can be expanded by users. One default list, the di↵usion list, contains all di↵usible molecules. At each time step iteration, the simulator loops over the di↵usion list and updates each molecule position by computing a random di↵usion step. Then the simulator checks surface interactions for molecules with updated locations in case molecules move across surfaces that are reflective, absorptive, or jumping. Reactions simulated include zeroth order reactions, first order reactions, and second order reactions. In Smoldyn, it is arbitrary that lower order reactions are examined before higher ones. This arrangement introduces bias. The simulator processes reactions by checking molecules in lists. If a molecule is involved in a zeroth or first order reaction, the reaction probability is used to decide whether the particular reaction occurs or not. For second order reactions, the criterion for a reaction to occur is the binding radius. Binding or unbinding may change a molecule’s position. After the reaction stage, the simulator checks the surface interaction again for molecules that changed locations.
+
+
+
+\subsection{Modifications to Smoldyn}
+
+In a unoptimized sequence of additions, the sequence of operations is as
+follows for each pair of numbers ($m_1$,$e_1$) and ($m_2$,$e_2$).
+\begin{enumerate}
+  \item Compare $e_1$ and $e_2$.
+  \item Shift the mantissa associated with the smaller exponent $|e_1-e_2|$
+        places to the right.
+  \item Add $m_1$ and $m_2$.
+  \item Find the first one in the resulting mantissa.
+  \item Shift the resulting mantissa so that normalized
+  \item Adjust the exponent accordingly.
+\end{enumerate}
+
+Out of 6 steps, only one is the actual addition, and the rest are involved
+in aligning the mantissas prior to the add, and then normalizing the result
+afterward.  In the block exponent optimization, the largest mantissa is
+found to start with, and all the mantissa's shifted before any additions
+take place.  Once the mantissas have been shifted, the additions can take
+place one after another\footnote{This requires that for n consecutive
+additions, there are $\log_{2}n$ high guard bits to prevent overflow.  In
+the $\mu$FPU, there are 3 guard bits, making up to 8 consecutive additions
+possible.}.  An example of the Block Exponent optimization on the expression
+X = A + B + C is given in figure~\ref{opt:be}.
+
+% This is an example of how you would use tgrind to include an example
+% of source code; it is commented out in this template since the code
+% example file does not exist.  To use it, you need to remove the '%' on the
+% beginning of the line, and insert your own information in the call.
+%
+%\tgrind[htbp]{code/be.s.tex}{Block Exponent}{opt:be}
+
+\section{Integer optimizations}
+
+As well as the floating point optimizations described above, there are
+also integer optimizations that can be used in the $\mu$FPU.  In concert
+with the floating point optimizations, these can provide a significant
+speedup.  
+
+\subsection{Conversion to fixed point}
+
+Integer operations are much faster than floating point operations; if it is
+possible to replace floating point operations with fixed point operations,
+this would provide a significant increase in speed.
+
+This conversion can either take place automatically or or based on a
+specific request from the programmer.  To do this automatically, the
+compiler must either be very smart, or play fast and loose with the accuracy
+and precision of the programmer's variables.  To be ``smart'', the computer
+must track the ranges of all the floating point variables through the
+program, and then see if there are any potential candidates for conversion
+to floating point.  This technique is discussed further in
+section~\ref{range-tracking}, where it was implemented.
+
+The other way to do this is to rely on specific hints from the programmer
+that a certain value will only assume a specific range, and that only a
+specific precision is desired.  This is somewhat more taxing on the
+programmer, in that he has to know the ranges that his values will take at
+declaration time (something normally abstracted away), but it does provide
+the opportunity for fine-tuning already working code.
+
+Potential applications of this would be simulation programs, where the
+variable represents some physical quantity; the constraints of the physical
+system may provide bounds on the range the variable can take.
+\subsection{Small Constant Multiplications}
+
+One other class of optimizations that can be done is to replace
+multiplications by small integer constants into some combination of
+additions and shifts.  Addition and shifting can be significantly faster
+than multiplication.  This is done by using some combination of
+\begin{eqnarray*}
+a_i & = & a_j + a_k \\
+a_i & = & 2a_j + a_k \\
+a_i & = & 4a_j + a_k \\
+a_i & = & 8a_j + a_k \\
+a_i & = & a_j - a_k \\
+a_i & = & a_j \ll m \mbox{shift}
+\end{eqnarray*}
+instead of the multiplication.  For example, to multiply $s$ by 10 and store
+the result in $r$, you could use:
+\begin{eqnarray*}
+r & = & 4s + s\\
+r & = & r + r
+\end{eqnarray*}
+Or by 59:
+\begin{eqnarray*}
+t & = & 2s + s \\
+r & = & 2t + s \\
+r & = & 8r + t
+\end{eqnarray*}
+Similar combinations can be found for almost all of the smaller
+integers\footnote{This optimization is only an ``optimization'', of course,
+when the amount of time spent on the shifts and adds is less than the time
+that would be spent doing the multiplication.  Since the time costs of these
+operations are known to the compiler in order for it to do scheduling, it is
+easy for the compiler to determine when this optimization is worth using.}.
+\cite{magenheimer:precision}
+
+\section{Other optimizations}
+
+\subsection{Low-level parallelism}
+
+The current trend is towards duplicating hardware at the lowest level to
+provide parallelism\footnote{This can been seen in the i860; floating point
+additions and multiplications can proceed at the same time, and the RISC
+core be moving data in and out of the floating point registers and providing
+flow control at the same time the floating point units are active. \cite{byte:i860}}
+
+Conceptually, it is easy to take advantage to low-level parallelism in the
+instruction stream by simply adding more functional units to the $\mu$FPU,
+widening the instruction word to control them, and then scheduling as many
+operations to take place at one time as possible.
+
+However, simply adding more functional units can only be done so many times;
+there is only a limited amount of parallelism directly available in the
+instruction stream, and without it, much of the extra resources will go to
+waste.  One process used to make more instructions potentially schedulable
+at any given time is ``trace scheduling''.  This technique originated in the
+Bulldog compiler for the original VLIW machine, the ELI-512.
+\cite{ellis:bulldog,colwell:vliw}  In trace scheduling, code can be
+scheduled through many basic blocks at one time, following a single
+potential ``trace'' of program execution.  In this way, instructions that
+{\em might\/} be executed depending on a conditional branch further down in
+the instruction stream are scheduled, allowing an increase in the potential
+parallelism.  To account for the cases where the expected branch wasn't
+taken, correction code is inserted after the branches to undo the effects of
+any prematurely executed instructions.
+
+\subsection{Pipeline optimizations}
+
+In addition to having operations going on in parallel across functional
+units, it is also typical to have several operations in various stages of
+completion in each unit.  This pipelining allows the throughput of the
+functional units to be increased, with no increase in latency.
+
+There are several ways pipelined operations can be optimized.  On the
+hardware side, support can be added to allow data to be recirculated back
+into the beginning of the pipeline from the end, saving a trip through the
+registers.  On the software side, the compiler can utilize several tricks to
+try to fill up as many of the pipeline delay slots as possible, as
+seendescribed by Gibbons. \cite{gib86}
+
+
