@@ -18,20 +18,84 @@ For the model described here, we have chosen to use Smoldyn. Smoldyn is a stocha
 
 Smoldyn uses a fixed time step. An appropriate time step value is selected so that in one time step the probability of having the fastest first order reaction occur is at most 0.1. With this assumption, during a time step, whether a first order reaction occurs or does not occur can be viewed as a binary event, which follows a Poisson distribution. For three-dimensional isotropic Brownian diffusions, a mean square distance is calculated for each diffusible molecule for each spatial coordinate following the equation $MSD = \sqrt{2\times rv\timesdt}$, where $rv$ is a unit Gaussian random variable and $dt$ is the time step. The MSD is calculated at each iteration and added to each diffusible molecule.
 
-The reactions built into the Smoldyn simulator are mostly elementary reactions and can be at most second order. First order reactions such as unbindings and (de)phosphorylations are modeled as Poisson processes with event rate equals the corresponding rate constant parameter measured from experiments. Probability is calculated for each reaction using equation P r = exp( rate ⇥ dt). A random variable is generated and compared to the Pr value as a criterion to decide whether to proceed the particular reaction (r.v.<Pr). Second order binding reactions in Smoldyn are di↵usion-limited, which means the binding step takes place fast once
-the reactants collide with each other. This concept is defined as below,
-KD * Ka A+B  !(AB)   !AB,Ka >>KD.
-Where Ka is the activation rate that allows bindings to complete, and KD is the rate that two reactants di↵use together and collide. This condition is a reasonable assumption for reactions in solution phase such as intracellular environments, where lots of reactions involve enzymes can lower the activation energy and allow reactions to proceed fast.
+The reactions built into the Smoldyn simulator are mostly elementary reactions and can be at most second order. First order reactions such as unbindings and (de)phosphorylations are modeled as Poisson processes with event rates equal the corresponding rate constant parameter measured from experiments. Probability is calculated for each reaction using equation $Pr=e^{-rate\timesdt}$. A random variable is generated and compared to the $Pr$ value as a criterion to decide whether to proceed the particular reaction ($rv<Pr$). 
 
-Since molecules in Smoldyn do not possess physical volume, collisions are assumed to occur as long as two reactants are su ciently close. The criterion for the closeness is a binding radius, which is calculated in Smoldyn based on simulation time step, reactants diffusion coeffcients, the kinetic rate constant, and the possible reversal unbinding reactions. Reactants within the binding radius are allowed to bind.
+Since molecules in Smoldyn do not possess physical volume, collisions are assumed to occur as long as two reactants are sufficiently close. The criterion for the closeness is a binding radius, which is calculated in Smoldyn based on simulation time step, reactants diffusion coeffcients, the kinetic rate constant, and the possible reversal unbinding reactions. Reactants within the binding radius are allowed to bind. The binding radius is essentially an absorbing boundary, which mathematically approximate 
+... ~\cite{Andrews}.
+
 The workflow of Smoldyn within a time step is as follow:
-diffusion ! surface interaction check ! reactions ! surface interaction check ! imulation time update
+diffusion -> surface interaction check -> reactions -> surface interaction check -> simulation time update
 
-Molecules are grouped into lists, which can be expanded by users. One default list, the di↵usion list, contains all di↵usible molecules. At each time step iteration, the simulator loops over the di↵usion list and updates each molecule position by computing a random di↵usion step. Then the simulator checks surface interactions for molecules with updated locations in case molecules move across surfaces that are reflective, absorptive, or jumping. Reactions simulated include zeroth order reactions, first order reactions, and second order reactions. In Smoldyn, it is arbitrary that lower order reactions are examined before higher ones. This arrangement introduces bias. The simulator processes reactions by checking molecules in lists. If a molecule is involved in a zeroth or first order reaction, the reaction probability is used to decide whether the particular reaction occurs or not. For second order reactions, the criterion for a reaction to occur is the binding radius. Binding or unbinding may change a molecule’s position. After the reaction stage, the simulator checks the surface interaction again for molecules that changed locations.
 
+Molecules are grouped into lists. By default, there is a diffusion list which contains all diffusible molecules. At each time step iteration, the simulator loops over the diffusion list and updates each molecule position by computing a random diffusion step. Then the simulator checks surface interactions for molecules with updated locations in case molecules move across surfaces that are reflective, absorptive, or jumping. In general, whenever molecules update positions due to diffusion or reactions, the simulator examines the possible interactions between molecules and compartment surfaces to see if boundary conditions are violated. Reactions simulated include zeroth order, first order, and second order reactions. In Smoldyn, it is arbitrary that lower order reactions are examined before higher ones. This arrangement however introduces bias. Smoldyn processes reactions by checking molecules in lists. If a molecule is involved in a zeroth or first order reaction, the reaction probability is used to decide whether the particular reaction occurs or not. For second order reactions, the criterion for a reaction to occur is the binding radius. Binding or unbinding may change a molecule’s position. After the reaction stage, the simulator checks the surface interaction again for molecules that changed locations.
 
 
 \subsection{Modifications to Smoldyn}
+Our work requires modeling reactions between complex molecules, and this leads us to develop more sophisticated molecule and reaction features than available in the original Smoldyn. In our customized version, molecules are not just point-like objects. Complex molecules, such as CaMKII, consist of multiple subunits which can have independent reactions. Consequently, we have modified Smoldyn so that subunits take distinct physical locations. For diffusion, the position change is calculated for one subunit, and the other subunits shift their positions accordingly.
+
+Each complex has multiple subunits or molecules, and each molecule has at least one binding sites. The states of binding sites are implemented as bit vectors. Value 1 means a site is bound or phosphorylated; whereas a value 0 means a site is unbound or unphosphorylated. Hence, each molecule can have 2 sites num states. Depending on the binding situation of the reactant(s), there can be a set of possible reaction choices, which are chained in an arbitrary sequence. The customized simulator picks one reaction from the sequence randomly and checks the reactant(s) against the probability (for first order reactions) or the binding radius (for second order reactions). If the picked reaction gets rejected, the simulator continues to the next reaction in the sequence until all reactions are examined or one passes the check. Using random picking, we avoid the potential bias caused by a fixed sequence of choices.
+
+To illustrate, suppose we have a calmodulin molecule with no calcium ions bound (apoCaM) and one nearby calcium ion can interact with either an N lobe site or a C lobe site of calmodulin. The two reaction choices can be expressed:
+\begin{quote}
+\begin{verbatim}
+cam{N1==0, N2==0, C1==0, C2==0, Ng==0, K==0, Kp==0} + ca{cam==0} -> cam[N1=1]~ca[cam=1]
+cam{N1==0, N2==0, C1==0, C2==0, Ng==0, K==0, Kp==0} + ca{cam==0} -> cam[C1=1]~ca[cam=1]
+\end{quote}
+\end{verbatim}
+In the equations, '{}' represents the states at relevant binding sites and also can be considered as the precondition for the reaction to occur; + represents binding; '$\sim$' is a bond formed between molecules; '[]' codes for sites that are updated in products. The bit vector of the binding states of the calmodulin molecules is ’0000000’, which equals 0. This binding state value is paired with the identity of the calmodulin molecule, resulting in the first key. Likewise, a second key value can be calculated for the calcium ion. The simulator uses the key pair to look up a reaction choice in pre-loaded reaction table, which is a hashtable with a key pair input. The lookup result is the sequence of two reactions which are listed above. Then one reaction is picked randomly. Since this reaction is second order, if the distance between the reactants is less than the binding radius, the two reactants bind accordingly, with sites involved in the binding updated to new values by updating the bit vectors. Otherwise, the simulator continues to the next reaction in the sequence. To speed up simulations, the model space is pre-divided into unit boxes during model initiation. Only molecule pairs located in the same box or neighbor boxes are considered as nearby for reaction checking.
+
+
+\subsection{Categories of reactions}
+In the original Smoldyn, two reactants bind and collapse into one product. The reactants are removed from the system, and a product molecule is generated anew. As a result, the product carries a different serial number, making it difficult to log the reaction history of a particular molecule. In the customized version, all reactions and occur at the binding site level, defined for an individual molecule or subunit. When two reactants bind, we use pointers to connect the molecules at the involved binding sites. Their physical positions overlap, point to each other and become synchronized. Therefore, they are bound without being replaced by newly generated molecules, making the simulator possible to track the reaction history of each molecule. When two molecules are bound together, one is considered as a master molecule, and the other is an attached ”slave”. The master molecule determines what diffusion coefficient of the complex. For example, when Ca2+ binds to CaM, CaM is the master molecule, and the Ca2+/CaM diffuses at the same speed as CaM.
+
+Reactions are categorized by the number of reactants involved and products generated. Below are the reaction types included in the model.
+1) A->B
+An example reaction is that a phosphorylated CaMKII subunit without CaM bound becomes
+dephosphorylated, e.g.,
+camkii{P==1,cam==0} -> camkii[P=0].
+Where P stands for the phosphate binding site and cam stands for the CaM binding site of bK. Assuming abundant phosphate molecules are around, so phosphate are treated implicitly, and the reaction is unimolecular and first order.
+
+2) A~C->B~C
+An example is a CaM-bound CaMKII subunit becomes dephosphorylated. Because a CaM-bound CaMKII subunit dephosphorylates at a di↵erent rate from an unbound one, this reaction is listed seperately, e.g.,
+camkii{cam==1,P==1}~cam{K==1,Kp==1} -> camkii[cam=1,P=0]~cam[K=1,Kp=0].
+In contrast to the first example, the reaction here is still first order but involves two molecules.
+The bound CaM is essential because the site named as Kp on CaM is needed to update the
+state. This site reflects the phosphorylation state of the CaMKII subunit bound to the cam. It
+is important to have this artificial Kp site because whether the bound CaMKII subunit is
+phosphorylated or not a↵ects other reactions that involve the CaM. For example, a CaM bound
+with a phosphorylated CaMKII subunit interacts di↵erently with a free ca2+ than a CaM
+attached to an unphosphorylated CaMKII subunit.
+Another particular case belonging to this category is the autophosphorylation reaction between
+CaMKII subunits, in which a subunit bound with a CaM may become phosphorylated if its
+neighbor subunit gets bound or phosphorylated. The reaction rules are described as below:
+camkii{cam==1, P==0, n->P==1}~cam{K==1, Kp==0} -> camkii[P=0]~cam[Kp=1]
+camkii{cam==1, P==0, n->cam==1}~cam{K==1, Kp==0} -> camkii[P=0]~cam[Kp=1].
+The n->P site and n->cam site of CaMKII are defined to reflect the binding and phosphorylation
+status of the neighbor subunit. The Kp site of cam is also updated in the reaction to track the
+phosphorylation status of the camkii.
+3) A~B -> A + B
+An example is a CaM with only the N1 site bound with a Ca2+ and the Ca2+ unbinds from
+this site, e.g.,
+cam{N1==1, N2==0, C1==0, C2==0, Ng==0, K==0, Kp==0}~ca{cam==1}
+-> cam[N1=0] + ca[cam=0].
+After unbinding, the physical locations of the two reactants separate from each other. The
+binding site that previously pointed to the other molecule becomes a null pointer.
+94) A+B -> A~B
+An example is that one used previously describing an apoCaM binding to a free Ca2+ at the N1
+site, e.g.,
+cam{N1==0, N2==0, C1==0, C2==0, Ng==0, K==0, Kp==0} + ca{cam==1}
+-> cam[N1=1]~ca[cam=0].
+After binding, the two reactants’ physical locations overlap and become synchronized.
+Among the four reaction types, type I-III are first order and type IV is second order. Except for
+type I that involves one reactant, all the rest involve two reactants. Other types of reactions
+shown in the original Smoldyn but not listed above include A+B-¿C+D, which is suitable for
+gas phase reactions. For solution phase as in the intracellular environment, the solvents tend to
+cage reactants and allow them staying bound instead of quickly split up. Michaelis-Menten
+reactions in the form A+B<->A~B->A+C are divided into three separate reactions:
+A+B->A~B, A~B->A+B, A~B->A+C.
+
+
+
 
 In a unoptimized sequence of additions, the sequence of operations is as
 follows for each pair of numbers ($m_1$,$e_1$) and ($m_2$,$e_2$).
